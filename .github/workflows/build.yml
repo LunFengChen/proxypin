@@ -110,19 +110,47 @@ jobs:
       
       - name: Disable code signing
         run: |
-          # Disable code signing for CI build
-          sed -i '' 's/CODE_SIGN_IDENTITY = "Apple Development"/CODE_SIGN_IDENTITY = "-"/g' macos/Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' macos/Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/DEVELOPMENT_TEAM = .*;/DEVELOPMENT_TEAM = "";/g' macos/Runner.xcodeproj/project.pbxproj
+          # Disable code signing for CI build - more comprehensive approach
+          cd macos/Runner.xcodeproj
+          # Replace all code signing settings
+          sed -i '' 's/CODE_SIGN_IDENTITY = ".*"/CODE_SIGN_IDENTITY = "-"/g' project.pbxproj
+          sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' project.pbxproj
+          sed -i '' 's/DEVELOPMENT_TEAM = .*;/DEVELOPMENT_TEAM = "";/g' project.pbxproj
+          sed -i '' 's/"DEVELOPMENT_TEAM\[sdk=macosx\*\]" = .*;/"DEVELOPMENT_TEAM[sdk=macosx*]" = "";/g' project.pbxproj
+          # Also disable provisioning profile
+          sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = ".*"/PROVISIONING_PROFILE_SPECIFIER = ""/g' project.pbxproj
+          # Show what we changed
+          grep -E "(CODE_SIGN|DEVELOPMENT_TEAM|PROVISIONING)" project.pbxproj | head -20 || true
       
       - name: Build macOS
-        run: flutter build macos --release
+        run: |
+          # Build with xcodebuild directly to have more control over signing
+          flutter build macos --release --config-only
+          cd macos
+          xcodebuild -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            -derivedDataPath ../build/macos/Build \
+            build
       
       - name: Install create-dmg
         run: brew install create-dmg
       
       - name: Create DMG
         run: |
+          # Find the app bundle
+          APP_PATH=$(find build/macos -name "ProxyPin.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "ProxyPin.app not found, listing build directory:"
+            find build/macos -type d -name "*.app" || true
+            ls -la build/macos/ || true
+            exit 1
+          fi
+          echo "Found app at: $APP_PATH"
           create-dmg \
             --volname "ProxyPin" \
             --window-pos 200 120 \
@@ -132,14 +160,18 @@ jobs:
             --hide-extension "ProxyPin.app" \
             --app-drop-link 600 185 \
             "${{ env.APP_NAME }}-${{ needs.version.outputs.version }}-macos.dmg" \
-            "build/macos/Build/Products/Release/ProxyPin.app"
+            "$APP_PATH"
         continue-on-error: true
       
       - name: Fallback to zip if DMG fails
         run: |
-          cd build/macos/Build/Products/Release
-          zip -r ${{ env.APP_NAME }}-${{ needs.version.outputs.version }}-macos.zip ProxyPin.app
-          mv ${{ env.APP_NAME }}-${{ needs.version.outputs.version }}-macos.zip ../../../../../
+          APP_PATH=$(find build/macos -name "ProxyPin.app" -type d | head -1)
+          if [ -n "$APP_PATH" ]; then
+            APP_DIR=$(dirname "$APP_PATH")
+            cd "$APP_DIR"
+            zip -r ${{ env.APP_NAME }}-${{ needs.version.outputs.version }}-macos.zip ProxyPin.app
+            mv ${{ env.APP_NAME }}-${{ needs.version.outputs.version }}-macos.zip $GITHUB_WORKSPACE/
+          fi
       
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
