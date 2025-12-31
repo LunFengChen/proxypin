@@ -108,13 +108,15 @@ jobs:
           flutter pub get
           cd macos && pod install
       
-      - name: Build macOS
+      - name: Disable code signing
         run: |
-          flutter build macos --release
-        env:
-          CODE_SIGN_IDENTITY: ""
-          CODE_SIGNING_REQUIRED: "NO"
-          CODE_SIGNING_ALLOWED: "NO"
+          # Disable code signing for CI build
+          sed -i '' 's/CODE_SIGN_IDENTITY = "Apple Development"/CODE_SIGN_IDENTITY = "-"/g' macos/Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' macos/Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/DEVELOPMENT_TEAM = .*;/DEVELOPMENT_TEAM = "";/g' macos/Runner.xcodeproj/project.pbxproj
+      
+      - name: Build macOS
+        run: flutter build macos --release
       
       - name: Install create-dmg
         run: brew install create-dmg
